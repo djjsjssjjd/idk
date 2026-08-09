@@ -1,0 +1,15 @@
+name: SSH Session
+on:
+  workflow_dispatch:  # manual trigger only
+
+jobs:
+  ssh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup tmate session
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true  # only YOUR ssh key can connect
+          
