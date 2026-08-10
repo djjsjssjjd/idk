@@ -1,0 +1,184 @@
+name: ALFS Build
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential wget git rsync bc gawk parted \
+            qemu-utils ccache genext2fs bison flex libtool \
+            automake autoconf texinfo libncurses5-dev
+
+      # ============================================
+      # CACHE: sources + cross-compiler + ccache
+      # ============================================
+      - name: Cache build state
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/cross
+            ~/sources
+            ~/.ccache
+          key: alfs-${{ runner.os }}-${{ hashFiles('.github/workflows/alfs.yml') }}
+          restore-keys: |
+            alfs-${{ runner.os }}-
+
+      # ============================================
+      # STAGE 1: Cross-compiler from source
+      # ============================================
+      - name: Build musl cross-compiler
+        run: |
+          if [ -f "$HOME/cross/bin/aarch64-linux-musl-gcc" ]; then
+            echo "Cross compiler cached, skipping build"
+            exit 0
+          fi
+          
+          git clone --depth 1 https://github.com/richfelker/musl-cross-make.git /tmp/mcm
+          cd /tmp/mcm
+          
+          cat > config.mak << 'EOF'
+          TARGET = aarch64-linux-musl
+          OUTPUT = /home/runner/cross
+          GCC_VER = 13.2.0
+          BINUTILS_VER = 2.42
+          MUSL_VER = 1.2.5
+          LINUX_VER = 6.6.22
+          DL_CMD = wget -c -O
+          EOF
+          
+          make -j$(nproc)
+          make install
+          
+          echo "=== Cross compiler installed ==="
+          $HOME/cross/bin/aarch64-linux-musl-gcc --version
+
+      # ============================================
+      # STAGE 2: Linux kernel
+      # ============================================
+      - name: Build kernel
+        run: |
+          export PATH=$HOME/cross/bin:$PATH
+          mkdir -p ~/sources && cd ~/sources
+          
+          if [ ! -d "linux-6.6.22" ]; then
+            wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.6.22.tar.xz
+            tar xf linux-6.6.22.tar.xz
+          fi
+          
+          cd linux-6.6.22
+          make ARCH=arm64 defconfig
+          
+          # Enable virtio for QEMU networking/block
+          sed -i 's/# CONFIG_VIRTIO_BLK is not set/CONFIG_VIRTIO_BLK=y/' .config
+          sed -i 's/# CONFIG_VIRTIO_NET is not set/CONFIG_VIRTIO_NET=y/' .config
+          sed -i 's/# CONFIG_VIRTIO_PCI is not set/CONFIG_VIRTIO_PCI=y/' .config
+          sed -i 's/# CONFIG_VIRTIO_MMIO is not set/CONFIG_VIRTIO_MMIO=y/' .config
+          sed -i 's/# CONFIG_EXT4_FS is not set/CONFIG_EXT4_FS=y/' .config
+          sed -i 's/# CONFIG_DEVTMPFS is not set/CONFIG_DEVTMPFS=y/' .config
+          sed -i 's/# CONFIG_NET is not set/CONFIG_NET=y/' .config
+          sed -i 's/# CONFIG_INET is not set/CONFIG_INET=y/' .config
+          
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-musl- -j$(nproc)
+          cp arch/arm64/boot/Image ~/sources/Image
+
+      # ============================================
+      # STAGE 3: BusyBox + rootfs
+      # ============================================
+      - name: Build busybox and rootfs
+        run: |
+          export PATH=$HOME/cross/bin:$PATH
+          cd ~/sources
+          
+          if [ ! -d "busybox-1.36.1" ]; then
+            wget -q https://busybox.net/downloads/busybox-1.36.1.tar.bz2
+            tar xf busybox-1.36.1.tar.bz2
+          fi
+          
+          cd busybox-1.36.1
+          make defconfig
+          sed -i 's/# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config
+          make CROSS_COMPILE=aarch64-linux-musl- -j$(nproc)
+          
+          SYSROOT=~/sources/sysroot
+          make CROSS_COMPILE=aarch64-linux-musl- CONFIG_PREFIX=$SYSROOT install
+          
+          # Setup rootfs layout
+          mkdir -p $SYSROOT/{dev,proc,sys,tmp,etc,root,usr/bin,usr/sbin,var/log}
+          
+          # Init
+          cat > $SYSROOT/etc/inittab << 'EOF'
+          ::sysinit:/etc/init.d/rcS
+          ::respawn:-/bin/sh
+          ::ctrlaltdel:/sbin/reboot
+          ::shutdown:/bin/umount -a -r
+          EOF
+          
+          mkdir -p $SYSROOT/etc/init.d
+          cat > $SYSROOT/etc/init.d/rcS << 'EOF'
+          #!/bin/sh
+          mount -t proc proc /proc
+          mount -t sysfs sysfs /sys
+          mount -t devtmpfs devtmpfs /dev
+          mount -t tmpfs tmpfs /tmp
+          ifconfig lo 127.0.0.1 up
+          route add 127.0.0.1 lo
+          EOF
+          chmod +x $SYSROOT/etc/init.d/rcS
+          
+          cat > $SYSROOT/etc/fstab << 'EOF'
+          proc    /proc   proc    defaults    0   0
+          sysfs   /sys    sysfs   defaults    0   0
+          devtmpfs /dev   devtmpfs defaults    0   0
+          tmpfs   /tmp    tmpfs   defaults    0   0
+          EOF
+          
+          # Root password = root
+          echo 'root:$1$$oCLuEVgI1iAqOA8J4.VFT.:0:0:99999:7:::' > $SYSROOT/etc/shadow
+          chmod 640 $SYSROOT/etc/shadow
+
+      # ============================================
+      # STAGE 4: Create ext4 image
+      # ============================================
+      - name: Create rootfs image
+        run: |
+          mkdir -p artifacts
+          
+          dd if=/dev/zero of=artifacts/rootfs.ext4 bs=1M count=128
+          mkfs.ext4 -F artifacts/rootfs.ext4
+          
+          mkdir -p mnt
+          sudo mount -o loop artifacts/rootfs.ext4 mnt
+          sudo cp -a ~/sources/sysroot/* mnt/
+          sudo umount mnt
+          
+          cp ~/sources/Image artifacts/
+          
+          cat > artifacts/BUILD_INFO.txt << EOF
+          Build Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          Commit: ${{ github.sha }}
+          Target: aarch64-linux-musl
+          Kernel: 6.6.22
+          EOF
+          
+          echo "=== Artifacts ==="
+          ls -lah artifacts/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: alfs-images-${{ github.run_id }}
+          path: artifacts/*
+          retention-days: 7
+          
