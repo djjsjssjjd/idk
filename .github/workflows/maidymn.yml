@@ -1,0 +1,159 @@
+name: Build Custom Linux OS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  KERNEL_VERSION: "6.6.50"
+  ARCH: arm64
+  ROOTFS_SIZE_MB: 512
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Cache downloaded kernel ──
+      - name: Cache Kernel
+        uses: actions/cache@v4
+        with:
+          path: |
+            kernel/
+            rootfs/
+          key: kernel-${{ env.KERNEL_VERSION }}-${{ env.ARCH }}
+
+      # ── Install deps ──
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            qemu-utils qemu-system-arm \
+            debootstrap binutils-aarch64-linux-gnu \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+            xz-utils cpio gzip
+
+      # ── Download Prebuilt Kernel ──
+      - name: Fetch Prebuilt Kernel
+        run: |
+          mkdir -p kernel
+          if [ ! -f kernel/Image ]; then
+            # Ubuntu mainline builds (fast mirror)
+            URL="https://kernel.ubuntu.com/mainline/v${KERNEL_VERSION}/arm64/linux-image-${KERNEL_VERSION}-generic_arm64.deb"
+            wget -q --show-progress "$URL" -O kernel.deb || \
+            wget -q "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/snapshot/linux-${KERNEL_VERSION}.tar.gz" -O kernel.tar.gz
+            
+            # Extract from deb if available, else we'll use a fallback
+            if [ -f kernel.deb ]; then
+              dpkg-deb -x kernel.deb kernel_extracted
+              find kernel_extracted -name "vmlinuz*" -exec cp {} kernel/Image \;
+              find kernel_extracted -name "initrd.img*" -exec cp {} kernel/initrd-orig \;
+            fi
+          fi
+          
+          # Fallback: use Ubuntu's packaged kernel for arm64
+          if [ ! -f kernel/Image ]; then
+            sudo apt-get install -y linux-image-generic
+            cp /boot/vmlinuz* kernel/Image 2>/dev/null || true
+          fi
+          
+          ls -la kernel/
+
+      # ── Build RootFS from Scratch ──
+      - name: Build Minimal RootFS
+        run: |
+          mkdir -p rootfs
+          sudo debootstrap --arch=arm64 --variant=minbase \
+            noble rootfs/chroot http://ports.ubuntu.com/ubuntu-ports
+          
+          # Enter chroot and configure
+          sudo mount --bind /proc rootfs/chroot/proc
+          sudo mount --bind /sys rootfs/chroot/sys
+          sudo mount --bind /dev rootfs/chroot/dev
+          
+          sudo chroot rootfs/chroot /bin/bash -c "
+            apt-get update
+            apt-get install -y --no-install-recommends \
+              linux-image-generic systemd systemd-sysv \
+              vim-tiny iproute2 iputils-ping net-tools \
+              openssh-server curl wget ca-certificates
+            echo 'root:root' | chpasswd
+            systemctl enable ssh
+            exit
+          "
+          
+          sudo umount rootfs/chroot/proc
+          sudo umount rootfs/chroot/sys
+          sudo umount rootfs/chroot/dev
+
+      # ── Create Bootable Disk Image ──
+      - name: Create Disk Image
+        run: |
+          IMG="custom-linux-${KERNEL_VERSION}-${ARCH}.img"
+          dd if=/dev/zero of=$IMG bs=1M count=${{ env.ROOTFS_SIZE_MB }}
+          
+          # Setup as loop device
+          LOOP=$(sudo losetup -f --show $IMG)
+          
+          # Partition: 1 FAT32 boot, 2 ext4 root
+          sudo parted -s $LOOP mklabel msdos
+          sudo parted -s $LOOP mkpart primary fat32 1MiB 64MiB
+          sudo parted -s $LOOP mkpart primary ext4 64MiB 100%
+          sudo parted -s $LOOP set 1 boot on
+          
+          # Format
+          sudo mkfs.vfat -F32 ${LOOP}p1
+          sudo mkfs.ext4 ${LOOP}p2
+          
+          # Mount and copy
+          mkdir -p mnt/boot mnt/root
+          sudo mount ${LOOP}p1 mnt/boot
+          sudo mount ${LOOP}p2 mnt/root
+          
+          # Copy rootfs
+          sudo cp -a rootfs/chroot/* mnt/root/
+          
+          # Copy kernel & initrd to boot
+          sudo cp kernel/Image mnt/boot/vmlinuz
+          sudo cp kernel/initrd-orig mnt/root/boot/initrd.img 2>/dev/null || \
+            echo "No original initrd, will generate"
+          
+          # Install extlinux bootloader (simple, no GRUB compile)
+          sudo mkdir -p mnt/boot/extlinux
+          sudo extlinux --install mnt/boot/extlinux
+          
+          sudo dd if=/usr/lib/EXTLINUX/mbr.bin of=$LOOP bs=440 count=1 2>/dev/null || \
+          sudo dd if=/usr/lib/syslinux/mbr/mbr.bin of=$LOOP bs=440 count=1
+          
+          cat <<EOF | sudo tee mnt/boot/extlinux/extlinux.conf
+          DEFAULT linux
+          LABEL linux
+            KERNEL /vmlinuz
+            APPEND root=/dev/mmcblk0p2 rw console=ttyAMA0
+          EOF
+          
+          sudo umount mnt/boot
+          sudo umount mnt/root
+          sudo losetup -d $LOOP
+          
+          # Compress
+          xz -T0 -v $IMG
+          echo "IMAGE_NAME=${IMG}.xz" >> $GITHUB_ENV
+
+      # ── Upload Artifact ──
+      - name: Upload OS Image
+        uses: actions/upload-artifact@v4
+        with:
+          name: custom-linux-os
+          path: ${{ env.IMAGE_NAME }}
+          retention-days: 7
+
+      # ── Release on Tag ──
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.IMAGE_NAME }}
+          
