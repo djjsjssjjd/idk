@@ -1,0 +1,457 @@
+name: Buildroot Compile
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Buildroot target defconfig'
+        required: true
+        default: 'qemu_aarch64_virt_defconfig'
+        type: choice
+        options:
+          - qemu_aarch64_virt_defconfig
+          - qemu_arm_versatile_defconfig
+          - raspberrypi4_64_defconfig
+          - pc_x86_64_bios_defconfig
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360  # 6 hours for full builds
+
+    steps:
+      # ============================================
+      # 1. CHECKOUT & DEPENDENCIES
+      # ============================================
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            wget \
+            git \
+            cpio \
+            unzip \
+            rsync \
+            bc \
+            libncurses5-dev \
+            file \
+            libssl-dev \
+            python3 \
+            python3-pip \
+            qemu-system-arm \
+            qemu-system-aarch64 \
+            qemu-utils \
+            bison \
+            flex \
+            gawk \
+            texinfo \
+            libtool \
+            autoconf \
+            automake \
+            pkg-config \
+            libelf-dev \
+            libmpc-dev \
+            libmpfr-dev \
+            libgmp-dev \
+            squashfs-tools \
+            genext2fs \
+            mtd-utils
+
+      # ============================================
+      # 2. CACHE SETUP (critical for speed)
+      # ============================================
+      - name: Cache Buildroot downloads
+        uses: actions/cache@v4
+        with:
+          path: buildroot/dl
+          key: buildroot-dl-${{ hashFiles('buildroot/configs/*', 'buildroot/**/*.mk') }}
+          restore-keys: |
+            buildroot-dl-
+
+      - name: Cache Buildroot build output
+        uses: actions/cache@v4
+        with:
+          path: buildroot/output
+          key: buildroot-output-${{ github.ref }}-${{ github.sha }}
+          restore-keys: |
+            buildroot-output-${{ github.ref }}-
+            buildroot-output-
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ runner.os }}-${{ github.ref }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ github.ref }}-
+            ccache-${{ runner.os }}-
+
+      # ============================================
+      # 3. FETCH BUILDROOT
+      # ============================================
+      - name: Clone Buildroot
+        run: |
+          if [ ! -d "buildroot" ]; then
+            git clone --depth 1 --branch 2024.02.x https://git.buildroot.net/buildroot buildroot
+          fi
+          cd buildroot
+          git log --oneline -1
+
+      # ============================================
+      # 4. APPLY CUSTOM CONFIG
+      # ============================================
+      - name: Generate custom defconfig
+        run: |
+          cd buildroot
+          make ${{ github.event.inputs.target || 'qemu_aarch64_virt_defconfig' }}
+          
+          # Apply extra packages and settings via config fragments
+          cat >> .config << 'EOF'
+          # --- Toolchain ---
+          BR2_CCACHE=y
+          BR2_CCACHE_DIR="$(HOME)/.ccache"
+          BR2_OPTIMIZE_3=y
+          BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
+          BR2_PACKAGE_GDB=y
+          BR2_PACKAGE_BINUTILS=y
+          BR2_PACKAGE_BINUTILS_TARGET=y
+
+          # --- Filesystem ---
+          BR2_TARGET_ROOTFS_EXT2=y
+          BR2_TARGET_ROOTFS_EXT2_4=y
+          BR2_TARGET_ROOTFS_EXT2_SIZE="512M"
+          BR2_TARGET_ROOTFS_CPIO=y
+          BR2_TARGET_ROOTFS_CPIO_GZIP=y
+          BR2_TARGET_ROOTFS_TAR=y
+
+          # --- Kernel ---
+          BR2_LINUX_KERNEL=y
+          BR2_LINUX_KERNEL_USE_ARCH_DEFAULT_CONFIG=y
+          BR2_LINUX_KERNEL_NEEDS_HOST_OPENSSL=y
+
+          # --- Bootloader ---
+          BR2_TARGET_GRUB2=y
+          BR2_TARGET_GRUB2_ARM_EFI=y
+
+          # ============================================
+          # NETWORK & CONNECTIVITY
+          # ============================================
+          BR2_PACKAGE_OPENSSH=y
+          BR2_PACKAGE_OPENSSH_SERVER=y
+          BR2_PACKAGE_OPENSSH_CLIENT=y
+          BR2_PACKAGE_OPENSSH_KEY_UTILS=y
+          BR2_PACKAGE_OPENSSH_SANDBOX=y
+          BR2_PACKAGE_DROPBEAR=y
+          BR2_PACKAGE_DROPBEAR_CLIENT=y
+          BR2_PACKAGE_RSYNC=y
+          BR2_PACKAGE_WGET=y
+          BR2_PACKAGE_CURL=y
+          BR2_PACKAGE_SOCAT=y
+          BR2_PACKAGE_TCPDUMP=y
+          BR2_PACKAGE_IPROUTE2=y
+          BR2_PACKAGE_IPTABLES=y
+          BR2_PACKAGE_DNSMASQ=y
+          BR2_PACKAGE_NTP=y
+          BR2_PACKAGE_NETCAT=y
+          BR2_PACKAGE_NETCAT_OPENBSD=y
+          BR2_PACKAGE_IW=y
+          BR2_PACKAGE_WPA_SUPPLICANT=y
+          BR2_PACKAGE_WPA_SUPPLICANT_AP_SUPPORT=y
+          BR2_PACKAGE_WPA_SUPPLICANT_WIFI_DISPLAY=y
+          BR2_PACKAGE_WPA_SUPPLICANT_MESH_NETWORKING=y
+          BR2_PACKAGE_WPA_SUPPLICANT_AUTOSCAN=y
+          BR2_PACKAGE_WPA_SUPPLICANT_EAP=y
+          BR2_PACKAGE_WPA_SUPPLICANT_WPS=y
+          BR2_PACKAGE_WPA_SUPPLICANT_CLI=y
+          BR2_PACKAGE_WPA_SUPPLICANT_PASSPHRASE=y
+          BR2_PACKAGE_BRIDGE_UTILS=y
+          BR2_PACKAGE_IFUPDOWN=y
+          BR2_PACKAGE_NET_TOOLS=y
+
+          # ============================================
+          # SHELL & CORE UTILITIES
+          # ============================================
+          BR2_PACKAGE_BASH=y
+          BR2_PACKAGE_BASH_COMPLETION=y
+          BR2_PACKAGE_ZSH=y
+          BR2_PACKAGE_VIM=y
+          BR2_PACKAGE_NANO=y
+          BR2_PACKAGE_HTOP=y
+          BR2_PACKAGE_NMON=y
+          BR2_PACKAGE_LSOF=y
+          BR2_PACKAGE_STRACE=y
+          BR2_PACKAGE_LTRACE=y
+          BR2_PACKAGE_TMUX=y
+          BR2_PACKAGE_SCREEN=y
+          BR2_PACKAGE_TREE=y
+          BR2_PACKAGE_FINDUTILS=y
+          BR2_PACKAGE_COREUTILS=y
+          BR2_PACKAGE_UTIL_LINUX=y
+          BR2_PACKAGE_UTIL_LINUX_BINARIES=y
+          BR2_PACKAGE_PROCPS_NG=y
+          BR2_PACKAGE_PSMISC=y
+          BR2_PACKAGE_SYSSTAT=y
+          BR2_PACKAGE_WHICH=y
+          BR2_PACKAGE_FILE=y
+          BR2_PACKAGE_LESS=y
+          BR2_PACKAGE_GZIP=y
+          BR2_PACKAGE_XZ=y
+          BR2_PACKAGE_TAR=y
+          BR2_PACKAGE_UNZIP=y
+          BR2_PACKAGE_ZIP=y
+
+          # ============================================
+          # DEVELOPMENT TOOLS
+          # ============================================
+          BR2_PACKAGE_GCC_TARGET=y
+          BR2_PACKAGE_MAKE=y
+          BR2_PACKAGE_CMAKE=y
+          BR2_PACKAGE_MESON=y
+          BR2_PACKAGE_NINJA=y
+          BR2_PACKAGE_GIT=y
+          BR2_PACKAGE_PERL=y
+          BR2_PACKAGE_PYTHON3=y
+          BR2_PACKAGE_PYTHON3_PYEXPAT=y
+          BR2_PACKAGE_PYTHON3_SSL=y
+          BR2_PACKAGE_PYTHON3_ZLIB=y
+          BR2_PACKAGE_PYTHON3_READLINE=y
+          BR2_PACKAGE_PYTHON3_CURSES=y
+          BR2_PACKAGE_PYTHON_PIP=y
+          BR2_PACKAGE_NODEJS=y
+          BR2_PACKAGE_NODEJS_NPM=y
+
+          # ============================================
+          # SYSTEM MONITORING & DEBUG
+          # ============================================
+          BR2_PACKAGE_DMIDECODE=y
+          BR2_PACKAGE_PCIUTILS=y
+          BR2_PACKAGE_USBUTILS=y
+          BR2_PACKAGE_I2C_TOOLS=y
+          BR2_PACKAGE_HWDATA=y
+          BR2_PACKAGE_HWDATA_IAB=y
+          BR2_PACKAGE_HWDATA_OUI=y
+          BR2_PACKAGE_HWDATA_PNP=y
+          BR2_PACKAGE_HWDATA_USB_IDS=y
+          BR2_PACKAGE_ETHTOOL=y
+          BR2_PACKAGE_IPERF3=y
+          BR2_PACKAGE_NLOAD=y
+          BR2_PACKAGE_IFTOP=y
+
+          # ============================================
+          # FILESYSTEMS & STORAGE
+          # ============================================
+          BR2_PACKAGE_E2FSPROGS=y
+          BR2_PACKAGE_E2FSPROGS_RESIZE2FS=y
+          BR2_PACKAGE_E2FSPROGS_E2FSCK=y
+          BR2_PACKAGE_E2FSPROGS_TUNE2FS=y
+          BR2_PACKAGE_DOSFSTOOLS=y
+          BR2_PACKAGE_DOSFSTOOLS_FSCK_FAT=y
+          BR2_PACKAGE_DOSFSTOOLS_MKFS_FAT=y
+          BR2_PACKAGE_NTFS_3G=y
+          BR2_PACKAGE_EXFAT=y
+          BR2_PACKAGE_EXFAT_UTILS=y
+          BR2_PACKAGE_F2FS_TOOLS=y
+          BR2_PACKAGE_PARTED=y
+          BR2_PACKAGE_GPTFDISK=y
+          BR2_PACKAGE_LVM2=y
+          BR2_PACKAGE_MDADM=y
+
+          # ============================================
+          # COMPRESSION & CRYPTO
+          # ============================================
+          BR2_PACKAGE_OPENSSL=y
+          BR2_PACKAGE_OPENSSL_BIN=y
+          BR2_PACKAGE_OPENSSL_ENGINES=y
+          BR2_PACKAGE_GNUTLS=y
+          BR2_PACKAGE_ZLIB=y
+          BR2_PACKAGE_LZ4=y
+          BR2_PACKAGE_ZSTD=y
+          BR2_PACKAGE_BZIP2=y
+
+          # ============================================
+          # CONTAINERS & VIRTUALIZATION
+          # ============================================
+          BR2_PACKAGE_CONTAINERD=y
+          BR2_PACKAGE_RUNC=y
+          BR2_PACKAGE_LIBSECCOMP=y
+
+          # ============================================
+          # HARDWARE SUPPORT
+          # ============================================
+          BR2_PACKAGE_KMOD=y
+          BR2_PACKAGE_KMOD_TOOLS=y
+          BR2_PACKAGE_UDEV=y
+          BR2_PACKAGE_EUDEV=y
+          BR2_PACKAGE_EUDEV_RULES_GEN=y
+          BR2_PACKAGE_LIBUSB=y
+          BR2_PACKAGE_LIBUSB_COMPAT=y
+          BR2_PACKAGE_LIBEVDEV=y
+          BR2_PACKAGE_LIBINPUT=y
+
+          # ============================================
+          # MISC UTILITIES
+          # ============================================
+          BR2_PACKAGE_NCURSES=y
+          BR2_PACKAGE_NCURSES_WCHAR=y
+          BR2_PACKAGE_READLINE=y
+          BR2_PACKAGE_LIBEDIT=y
+          BR2_PACKAGE_PCRE2=y
+          BR2_PACKAGE_JQ=y
+          BR2_PACKAGE_BC=y
+          BR2_PACKAGE_DC=y
+          BR2_PACKAGE_EXPECT=y
+          BR2_PACKAGE_DIALOG=y
+          BR2_PACKAGE_NEWT=y
+
+          # ============================================
+          # SSH ROOT ACCESS (for testing/dev)
+          # ============================================
+          BR2_ROOTFS_POST_BUILD_SCRIPT="board/qemu/post-build.sh"
+          BR2_ROOTFS_POST_FAKEROOT_SCRIPT=""
+          BR2_ROOTFS_POST_IMAGE_SCRIPT=""
+          BR2_ROOTFS_POST_BUILD_SCRIPT+=" ../custom-scripts/enable-ssh-root.sh"
+          EOF
+
+          # Create custom post-build script for SSH root access
+          mkdir -p custom-scripts
+          cat > custom-scripts/enable-ssh-root.sh << 'SCRIPT'
+          #!/bin/bash
+          set -e
+          
+          TARGET_DIR=$1
+          
+          # Enable root login via SSH
+          sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' "$TARGET_DIR/etc/ssh/sshd_config" 2>/dev/null || true
+          sed -i 's/PermitRootLogin.*/PermitRootLogin yes/' "$TARGET_DIR/etc/ssh/sshd_config" 2>/dev/null || true
+          
+          # Set root password to 'root' for easy access
+          echo 'root:$1$$oCLuEVgI1iAqOA8J4.VFT.:0:0:99999:7:::' >> "$TARGET_DIR/etc/shadow" 2>/dev/null || \
+          sed -i 's/^root:.*/root:$1$$oCLuEVgI1iAqOA8J4.VFT.:0:0:99999:7:::/' "$TARGET_DIR/etc/shadow"
+          
+          # Ensure SSH host keys are generated on first boot
+          mkdir -p "$TARGET_DIR/etc/ssh"
+          
+          # Enable services
+          mkdir -p "$TARGET_DIR/etc/init.d"
+          cat > "$TARGET_DIR/etc/init.d/S50sshd" << 'INIT'
+          #!/bin/sh
+          case "$1" in
+            start)
+              printf "Starting sshd: "
+              [ -f /etc/ssh/ssh_host_rsa_key ] || ssh-keygen -A
+              /usr/sbin/sshd
+              [ $? = 0 ] && echo "OK" || echo "FAIL"
+              ;;
+            stop)
+              printf "Stopping sshd: "
+              killall sshd 2>/dev/null
+              [ $? = 0 ] && echo "OK" || echo "FAIL"
+              ;;
+            restart|reload)
+              "$0" stop
+              "$0" start
+              ;;
+            *)
+              echo "Usage: $0 {start|stop|restart}"
+              exit 1
+          esac
+          INIT
+          chmod +x "$TARGET_DIR/etc/init.d/S50sshd"
+          
+          # Network config
+          cat > "$TARGET_DIR/etc/network/interfaces" << 'NET'
+          auto lo
+          iface lo inet loopback
+          
+          auto eth0
+          iface eth0 inet dhcp
+          NET
+          
+          # Enable dropbear as backup
+          mkdir -p "$TARGET_DIR/etc/dropbear"
+          SCRIPT
+          chmod +x custom-scripts/enable-ssh-root.sh
+
+          make olddefconfig
+
+      # ============================================
+      # 5. BUILD
+      # ============================================
+      - name: Build Buildroot
+        run: |
+          cd buildroot
+          make -j$(nproc) 2>&1 | tee build.log
+        timeout-minutes: 300
+
+      # ============================================
+      # 6. ARTIFACTS
+      # ============================================
+      - name: Collect build artifacts
+        run: |
+          mkdir -p artifacts
+          cp -v buildroot/output/images/* artifacts/ 2>/dev/null || true
+          cp -v buildroot/build.log artifacts/ 2>/dev/null || true
+          
+          # Create info file
+          cat > artifacts/BUILD_INFO.txt << EOF
+          Build Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          Buildroot Version: $(cd buildroot && git describe --tags --always 2>/dev/null || echo "unknown")
+          Target: ${{ github.event.inputs.target || 'qemu_aarch64_virt_defconfig' }}
+          Commit: ${{ github.sha }}
+          Runner: ${{ runner.os }}
+          EOF
+          
+          ls -lah artifacts/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildroot-images-${{ github.run_id }}
+          path: artifacts/
+          retention-days: 7
+
+      # ============================================
+      # 7. TEST WITH QEMU (optional smoke test)
+      # ============================================
+      - name: Smoke test with QEMU
+        if: contains(github.event.inputs.target || 'qemu', 'qemu')
+        run: |
+          cd buildroot/output/images
+          
+          if ls *.ext4 1>/dev/null 2>&1; then
+            ROOTFS=$(ls -1 *.ext4 | head -1)
+            KERNEL=$(ls -1 *Image* vmlinuz* bzImage* 2>/dev/null | head -1 || echo "")
+            
+            if [ -n "$KERNEL" ]; then
+              timeout 60 qemu-system-aarch64 \
+                -machine virt \
+                -cpu cortex-a72 \
+                -m 512M \
+                -kernel "$KERNEL" \
+                -append "root=/dev/vda console=ttyAMA0 loglevel=3" \
+                -drive file="$ROOTFS",format=raw,if=virtio \
+                -netdev user,id=net0,hostfwd=tcp::2222-:22 \
+                -device virtio-net-device,netdev=net0 \
+                -nographic \
+                -no-reboot || true
+            fi
+          fi
+
+      # ============================================
+      # 8. RELEASE (on tags)
+      # ============================================
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          
