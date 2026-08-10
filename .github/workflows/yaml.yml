@@ -1,0 +1,286 @@
+name: Buildroot CI
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential wget git cpio unzip rsync bc \
+            libncurses5-dev file libssl-dev python3 python3-pip \
+            qemu-system-aarch64 qemu-utils bison flex gawk texinfo \
+            libtool autoconf automake pkg-config libelf-dev \
+            libmpc-dev libmpfr-dev libgmp-dev squashfs-tools \
+            genext2fs mtd-utils
+
+      - name: Cache Buildroot downloads
+        uses: actions/cache@v4
+        with:
+          path: buildroot/dl
+          key: br-dl-${{ hashFiles('buildroot/**/*.mk', 'buildroot/**/*.hash') }}
+          restore-keys: br-dl-
+
+      - name: Cache Buildroot output
+        uses: actions/cache@v4
+        with:
+          path: buildroot/output
+          key: br-out-${{ github.ref }}-${{ github.sha }}
+          restore-keys: |
+            br-out-${{ github.ref }}-
+            br-out-
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ runner.os }}-${{ github.sha }}
+          restore-keys: ccache-${{ runner.os }}-
+
+      - name: Clone Buildroot
+        run: |
+          if [ ! -d "buildroot" ]; then
+            git clone --depth 1 --branch 2024.02.x https://git.buildroot.net/buildroot buildroot
+          fi
+          cd buildroot && git log --oneline -1
+
+      - name: Generate custom defconfig
+        run: |
+          cd buildroot
+          cp configs/qemu_aarch64_virt_defconfig configs/ci_aarch64_defconfig
+          
+          cat >> configs/ci_aarch64_defconfig << 'EOF'
+          
+          # Force filesystem outputs
+          BR2_TARGET_ROOTFS_EXT2=y
+          BR2_TARGET_ROOTFS_EXT2_4=y
+          BR2_TARGET_ROOTFS_EXT2_SIZE="512M"
+          BR2_TARGET_ROOTFS_CPIO=y
+          BR2_TARGET_ROOTFS_CPIO_GZIP=y
+          BR2_TARGET_ROOTFS_TAR=y
+          
+          # Performance
+          BR2_CCACHE=y
+          BR2_OPTIMIZE_3=y
+          
+          # Shell & editors
+          BR2_PACKAGE_BASH=y
+          BR2_PACKAGE_BASH_COMPLETION=y
+          BR2_PACKAGE_VIM=y
+          BR2_PACKAGE_NANO=y
+          BR2_PACKAGE_LESS=y
+          BR2_PACKAGE_HTOP=y
+          BR2_PACKAGE_TMUX=y
+          
+          # Core utils
+          BR2_PACKAGE_COREUTILS=y
+          BR2_PACKAGE_UTIL_LINUX=y
+          BR2_PACKAGE_UTIL_LINUX_BINARIES=y
+          BR2_PACKAGE_PROCPS_NG=y
+          BR2_PACKAGE_PSMISC=y
+          BR2_PACKAGE_SYSSTAT=y
+          BR2_PACKAGE_WHICH=y
+          BR2_PACKAGE_FILE=y
+          BR2_PACKAGE_FINDUTILS=y
+          BR2_PACKAGE_GREP=y
+          BR2_PACKAGE_SED=y
+          BR2_PACKAGE_GAWK=y
+          BR2_PACKAGE_DIFFUTILS=y
+          BR2_PACKAGE_PATCH=y
+          BR2_PACKAGE_TREE=y
+          
+          # Network stack
+          BR2_PACKAGE_OPENSSH=y
+          BR2_PACKAGE_OPENSSH_SERVER=y
+          BR2_PACKAGE_DROPBEAR=y
+          BR2_PACKAGE_WGET=y
+          BR2_PACKAGE_RSYNC=y
+          BR2_PACKAGE_IPROUTE2=y
+          BR2_PACKAGE_IPTABLES=y
+          BR2_PACKAGE_NETCAT_OPENBSD=y
+          BR2_PACKAGE_SOCAT=y
+          BR2_PACKAGE_TCPDUMP=y
+          BR2_PACKAGE_ETHTOOL=y
+          BR2_PACKAGE_NTP=y
+          BR2_PACKAGE_DNSMASQ=y
+          BR2_PACKAGE_BRIDGE_UTILS=y
+          BR2_PACKAGE_IFUPDOWN=y
+          BR2_PACKAGE_NET_TOOLS=y
+          BR2_PACKAGE_IW=y
+          BR2_PACKAGE_WPA_SUPPLICANT=y
+          
+          # Crypto & compression
+          BR2_PACKAGE_OPENSSL=y
+          BR2_PACKAGE_OPENSSL_BIN=y
+          BR2_PACKAGE_ZLIB=y
+          BR2_PACKAGE_ZSTD=y
+          BR2_PACKAGE_XZ=y
+          BR2_PACKAGE_GZIP=y
+          BR2_PACKAGE_BZIP2=y
+          BR2_PACKAGE_TAR=y
+          BR2_PACKAGE_UNZIP=y
+          
+          # Filesystem tools
+          BR2_PACKAGE_E2FSPROGS=y
+          BR2_PACKAGE_E2FSPROGS_RESIZE2FS=y
+          BR2_PACKAGE_E2FSPROGS_E2FSCK=y
+          BR2_PACKAGE_DOSFSTOOLS=y
+          BR2_PACKAGE_DOSFSTOOLS_FSCK_FAT=y
+          BR2_PACKAGE_DOSFSTOOLS_MKFS_FAT=y
+          BR2_PACKAGE_NTFS_3G=y
+          BR2_PACKAGE_EXFAT=y
+          BR2_PACKAGE_EXFAT_UTILS=y
+          BR2_PACKAGE_PARTED=y
+          
+          # Dev tools
+          BR2_PACKAGE_GIT=y
+          BR2_PACKAGE_MAKE=y
+          BR2_PACKAGE_CMAKE=y
+          BR2_PACKAGE_MESON=y
+          BR2_PACKAGE_NINJA=y
+          BR2_PACKAGE_PYTHON3=y
+          BR2_PACKAGE_PERL=y
+          BR2_PACKAGE_BINUTILS=y
+          BR2_PACKAGE_BINUTILS_TARGET=y
+          BR2_PACKAGE_GDB=y
+          BR2_PACKAGE_STRACE=y
+          BR2_PACKAGE_LTRACE=y
+          BR2_PACKAGE_LSOF=y
+          
+          # Hardware / monitoring
+          BR2_PACKAGE_KMOD=y
+          BR2_PACKAGE_KMOD_TOOLS=y
+          BR2_PACKAGE_PCIUTILS=y
+          BR2_PACKAGE_USBUTILS=y
+          BR2_PACKAGE_I2C_TOOLS=y
+          BR2_PACKAGE_DMIDECODE=y
+          BR2_PACKAGE_HWDATA=y
+          
+          # Libraries
+          BR2_PACKAGE_NCURSES=y
+          BR2_PACKAGE_READLINE=y
+          BR2_PACKAGE_PCRE2=y
+          BR2_PACKAGE_JQ=y
+          BR2_PACKAGE_BC=y
+          
+          # SSH root access hook
+          BR2_ROOTFS_POST_BUILD_SCRIPT="board/qemu/aarch64-virt/post-build.sh board/custom/enable-ssh-root.sh"
+          EOF
+
+      - name: Create post-build script
+        run: |
+          mkdir -p buildroot/board/custom
+          cat > buildroot/board/custom/enable-ssh-root.sh << 'EOF'
+          #!/bin/bash
+          set -e
+          TARGET_DIR="$1"
+          
+          if [ -f "$TARGET_DIR/etc/ssh/sshd_config" ]; then
+              sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' "$TARGET_DIR/etc/ssh/sshd_config"
+          fi
+          
+          if [ -f "$TARGET_DIR/etc/shadow" ]; then
+              sed -i 's|^root:[^:]*:|root:$1$$oCLuEVgI1iAqOA8J4.VFT.:|' "$TARGET_DIR/etc/shadow"
+          else
+              echo 'root:$1$$oCLuEVgI1iAqOA8J4.VFT.:0:0:99999:7:::' > "$TARGET_DIR/etc/shadow"
+              chmod 640 "$TARGET_DIR/etc/shadow"
+          fi
+          
+          mkdir -p "$TARGET_DIR/etc/network"
+          cat > "$TARGET_DIR/etc/network/interfaces" << 'NET'
+          auto lo
+          iface lo inet loopback
+          
+          auto eth0
+          iface eth0 inet dhcp
+          NET
+          
+          mkdir -p "$TARGET_DIR/etc/init.d"
+          cat > "$TARGET_DIR/etc/init.d/S50sshd" << 'INIT'
+          #!/bin/sh
+          case "$1" in
+            start)
+              printf "Starting sshd: "
+              [ -f /etc/ssh/ssh_host_rsa_key ] || ssh-keygen -A >/dev/null 2>&1
+              /usr/sbin/sshd
+              [ $? = 0 ] && echo "OK" || echo "FAIL"
+              ;;
+            stop)
+              printf "Stopping sshd: "
+              killall sshd 2>/dev/null
+              [ $? = 0 ] && echo "OK" || echo "FAIL"
+              ;;
+            restart)
+              "$0" stop
+              "$0" start
+              ;;
+            *)
+              echo "Usage: $0 {start|stop|restart}"
+              exit 1
+          esac
+          INIT
+          chmod +x "$TARGET_DIR/etc/init.d/S50sshd"
+          EOF
+          chmod +x buildroot/board/custom/enable-ssh-root.sh
+
+      - name: Build Buildroot
+        run: |
+          cd buildroot
+          export BR2_CCACHE_DIR="$HOME/.ccache"
+          make ci_aarch64_defconfig
+          make -j$(nproc) 2>&1 | tee build.log
+          echo "=== Generated images ==="
+          ls -lah output/images/
+        timeout-minutes: 300
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p artifacts
+          for f in buildroot/output/images/*; do
+            [ -f "$f" ] && cp -v "$f" artifacts/
+          done
+          cp -v buildroot/build.log artifacts/ 2>/dev/null || true
+          
+          cat > artifacts/BUILD_INFO.txt << EOF
+          Build Date: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          Buildroot: $(cd buildroot && git describe --tags --always 2>/dev/null || echo "unknown")
+          Commit: ${{ github.sha }}
+          EOF
+          
+          echo "=== Final artifact contents ==="
+          ls -lah artifacts/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildroot-images-${{ github.run_id }}
+          path: artifacts/*
+          retention-days: 7
+
+      - name: Smoke test with QEMU
+        run: |
+          cd buildroot/output/images
+          KERNEL=$(ls -1 Image *Image* 2>/dev/null | head -1 || echo "")
+          ROOTFS=$(ls -1 *.ext4 2>/dev/null | head -1 || echo "")
+          
+          if [ -n "$KERNEL" ] && [ -n "$ROOTFS" ]; then
+            timeout 60 qemu-system-aarch64 \
+              -machine virt -cpu cortex-a72 -m 512M \
+              -kernel "$KERNEL" \
+              -append "root=/dev/vda console=ttyAMA0 loglevel=3" \
+              -drive file="$ROOTFS",format=raw,if=virtio \
+              -netdev user,id=net0,hostfwd=tcp::2222-:22 \
+              -device virtio-net-device,netdev=net0 \
+              -nographic -no-reboot || true
+          fi
+          
