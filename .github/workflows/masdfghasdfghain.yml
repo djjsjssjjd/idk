@@ -1,0 +1,100 @@
+name: Buildroot aarch64 (qemu virt, no-KVM) CI
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      buildroot_ref:
+        description: 'Buildroot git ref (branch/tag/commit)'
+        required: false
+        default: '2024.02.1'
+      enable_ssh:
+        description: 'Enable SSH access mid-run via tmate (yes/no)'
+        required: false
+        default: 'no'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    env:
+      BUILDROOT_REF: ${{ github.event.inputs.buildroot_ref || '2024.02.1' }}
+      BR2_DL_DIR: ${{ github.workspace }}/cache/buildroot-downloads
+      OUTPUT_DIR: ${{ github.workspace }}/buildroot-output
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install host packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential git bison flex patch \
+            rsync ccache python3 python3-setuptools \
+            qemu-system-aarch64 qemu-utils >/dev/null
+
+      - name: Cache Buildroot downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.BR2_DL_DIR }}
+          key: buildroot-dl-${{ runner.os }}-${{ hashFiles('buildroot/config-append/**') }}
+          restore-keys: |
+            buildroot-dl-${{ runner.os }}-
+
+      - name: Clone Buildroot
+        run: |
+          git clone --depth 1 https://git.busybox.net/buildroot -b "${BUILDROOT_REF}" buildroot-src || git clone https://git.busybox.net/buildroot buildroot-src
+
+      - name: Prepare defconfig
+        run: |
+          pushd buildroot-src
+          make qemu_aarch64_virt_defconfig
+          scripts/kconfig/merge_config.sh -m .config ../buildroot/config-append/fragment.cfg
+          popd
+
+      - name: Build with Buildroot
+        run: |
+          mkdir -p "${BR2_DL_DIR}" "${OUTPUT_DIR}"
+          pushd buildroot-src
+          make -j$(nproc) O="${OUTPUT_DIR}" BR2_DL_DIR="${BR2_DL_DIR}"
+          popd
+
+      - name: SSH access (tmate) - mid run
+        if: github.event.inputs.enable_ssh == 'yes'
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true
+
+      - name: Package build artifacts
+        run: |
+          mkdir -p artifacts
+          cp -a buildroot-output/images artifacts/ 2>/dev/null || true
+          cp -a buildroot-output/target artifacts/target 2>/dev/null || true
+          ls -lah artifacts || true
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildroot-artifacts
+          path: artifacts
+
+      - name: Optional QEMU boot test
+        if: always()
+        run: |
+          set -euo pipefail
+          IMG_DIR=buildroot-output/images
+          [ -d "${IMG_DIR}" ] || exit 0
+          KERNEL="${IMG_DIR}/Image"
+          [ -f "${KERNEL}" ] || exit 0
+          ROOTFS="$(ls ${IMG_DIR}/rootfs.* ${IMG_DIR}/*.img ${IMG_DIR}/*.ext2 2>/dev/null | head -n1 || true)"
+          [ -n "${ROOTFS}" ] || exit 0
+          timeout 60s qemu-system-aarch64 \
+            -machine virt -cpu cortex-a53 -smp 1 -m 1024 \
+            -nographic \
+            -kernel "${KERNEL}" \
+            -append "root=/dev/vda rw console=ttyAMA0" \
+            -drive if=none,file="${ROOTFS}",id=hd0,format=raw \
+            -device virtio-blk-device,drive=hd0 \
+            -serial mon:stdio || true
+            
