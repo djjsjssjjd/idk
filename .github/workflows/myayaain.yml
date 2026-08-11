@@ -81,7 +81,7 @@ jobs:
           BR2_PACKAGE_OPKG=y
           BR2_PACKAGE_OPKG_UTILS=y
 
-          # --- Init system (sysvinit is lighter, switch to systemd if you want) ---
+          # --- Init system ---
           BR2_PACKAGE_SYSVINIT=y
           BR2_PACKAGE_SYSVINIT_CORE=y
 
@@ -188,9 +188,9 @@ jobs:
           BR2_PACKAGE_XDRIVER_XF86_INPUT_MOUSE=y
           BR2_PACKAGE_XDRIVER_XF86_INPUT_LIBINPUT=y
 
-          # X.org video drivers (modesetting works on QEMU virt)
+          # X.org video drivers (fbdev + modesetting for QEMU)
           BR2_PACKAGE_XDRIVER_XF86_VIDEO_FBDEV=y
-          BR2_PACKAGE_XDRIVER_XF86_VIDEO_MODESWITCHING=y
+          BR2_PACKAGE_XDRIVER_XF86_VIDEO_MODESETTING=y
 
           # X.org apps & utilities
           BR2_PACKAGE_XAPP_XINIT=y
@@ -206,10 +206,9 @@ jobs:
           BR2_PACKAGE_XAPP_XMODMAP=y
           BR2_PACKAGE_XAPP_XRANDR=y
           BR2_PACKAGE_XAPP_XRDB=y
-          BR2_PACKAGE_XAPP_XSETPOINTER=y
           BR2_PACKAGE_XAPP_XAUTH=y
 
-          # X.org libraries & protos
+          # Core X libraries (dependencies auto-resolve the rest)
           BR2_PACKAGE_LIBX11=y
           BR2_PACKAGE_LIBXEXT=y
           BR2_PACKAGE_LIBXRENDER=y
@@ -226,63 +225,25 @@ jobs:
           BR2_PACKAGE_LIBFONTENC=y
           BR2_PACKAGE_LIBXFONT2=y
           BR2_PACKAGE_LIBPCIACCESS=y
-          BR2_PACKAGE_XLIB_LIBXAW=y
-          BR2_PACKAGE_XLIB_LIBXT=y
-          BR2_PACKAGE_XLIB_LIBXMU=y
-          BR2_PACKAGE_XLIB_LIBXPM=y
-          BR2_PACKAGE_XLIB_LIBXFT=y
-          BR2_PACKAGE_XLIB_LIBFONTENC=y
-          BR2_PACKAGE_XLIB_LIBXFONT2=y
-          BR2_PACKAGE_XLIB_LIBXINERAMA=y
-          BR2_PACKAGE_XLIB_LIBXCOMPOSITE=y
-          BR2_PACKAGE_XLIB_LIBXDAMAGE=y
-          BR2_PACKAGE_XLIB_LIBXSS=y
-          BR2_PACKAGE_XLIB_LIBXXF86VM=y
-          BR2_PACKAGE_XLIB_LIBPCIACCESS=y
-          BR2_PACKAGE_XLIB_LIBXKBFILE=y
-          BR2_PACKAGE_XLIB_LIBXRES=y
-          BR2_PACKAGE_XLIB_LIBXV=y
-          BR2_PACKAGE_XLIB_LIBXVM=y
-
-          # XCB
-          BR2_PACKAGE_LIBXCB=y
+          BR2_PACKAGE_LIBXKBFILE=y
+          BR2_PACKAGE_LIBXRES=y
+          BR2_PACKAGE_LIBXV=y
           BR2_PACKAGE_XCB_UTIL=y
           BR2_PACKAGE_XCB_UTIL_IMAGE=y
-          BR2_PACKAGE_XCB_UTIL_KEYSMS=y
-          BR2_PACKAGE_XCB_UTIL_RENDER=y
           BR2_PACKAGE_XCB_UTIL_WM=y
           BR2_PACKAGE_XCB_UTIL_CURSOR=y
           BR2_PACKAGE_XCB_UTIL_XRM=y
 
           # --- Openbox Window Manager ---
           BR2_PACKAGE_OPENBOX=y
-          BR2_PACKAGE_OBCONF=y
 
           # --- Fonts for X ---
           BR2_PACKAGE_DEJAVU=y
           BR2_PACKAGE_FONTCONFIG=y
           BR2_PACKAGE_FREETYPE=y
           BR2_PACKAGE_LIBPNG=y
-          BR2_PACKAGE_LIBJPEG=y
-          BR2_PACKAGE_XFONT_FONT_ALIAS=y
-          BR2_PACKAGE_XFONT_FONT_MISC_ETHIOPIC=y
-          BR2_PACKAGE_XFONT_FONT_ADOBE_100DPI=y
-          BR2_PACKAGE_XFONT_FONT_ADOBE_75DPI=y
-          BR2_PACKAGE_XFONT_FONT_MISC_MELTHO=y
-          BR2_PACKAGE_XFONT_FONT_BH_100DPI=y
-          BR2_PACKAGE_XFONT_FONT_BH_75DPI=y
-          BR2_PACKAGE_XFONT_FONT_BH_LUCIDATYPEWRITER_100DPI=y
-          BR2_PACKAGE_XFONT_FONT_BH_LUCIDATYPEWRITER_75DPI=y
-          BR2_PACKAGE_XFONT_FONT_MISC_MISC=y
-          BR2_PACKAGE_XFONT_FONT_CURSOR_MISC=y
-          BR2_PACKAGE_XFONT_FONT_DEC_MISC=y
-          BR2_PACKAGE_XFONT_FONT_ISAS_MISC=y
-          BR2_PACKAGE_XFONT_FONT_JIS_MISC=y
-          BR2_PACKAGE_XFONT_FONT_MUTT_MISC=y
-          BR2_PACKAGE_XFONT_FONT_SONY_MISC=y
-          BR2_PACKAGE_XFONT_FONT_WINITZKI_CYRILLIC=y
 
-          # --- Python3 (trimmed) ---
+          # --- Python3 ---
           BR2_PACKAGE_PYTHON3=y
           BR2_PACKAGE_PYTHON3_PYEXPAT=y
           BR2_PACKAGE_PYTHON3_SSL=y
@@ -298,6 +259,113 @@ jobs:
 
           # --- Libraries ---
           BR2_PACKAGE_LIBEVENT=y
+          BR2_PACKAGE_LIBFFI=y
+          BR2_PACKAGE_LIBGPG_ERROR=y
+          BR2_PACKAGE_LIBGCRYPT=y
+          BR2_PACKAGE_LIBOPENSSL=y
+          BR2_PACKAGE_LIBOPENSSL_BIN=y
+          BR2_PACKAGE_LIBXML2=y
+          BR2_PACKAGE_EXPAT=y
+          BR2_PACKAGE_SQLITE=y
+          BR2_PACKAGE_SQLITE_ENABLE_FTS3=y
+          BR2_PACKAGE_SQLITE_ENABLE_JSON1=y
+
+          # --- Misc Utils ---
+          BR2_PACKAGE_BC=y
+          BR2_PACKAGE_GIT=y
+          BR2_PACKAGE_GIT_CURL=y
+          BR2_PACKAGE_INOTIFY_TOOLS=y
+          BR2_PACKAGE_LSOF=y
+          BR2_PACKAGE_MC=y
+          BR2_PACKAGE_PROCPS_NG=y
+          BR2_PACKAGE_PSMISC=y
+          BR2_PACKAGE_SCREEN=y
+          BR2_PACKAGE_SOCAT=y
+          BR2_PACKAGE_SUDO=y
+          BR2_PACKAGE_TMUX=y
+          BR2_PACKAGE_TTYD=y
+
+          # --- Locale ---
+          BR2_ENABLE_LOCALE_WHITELIST="C en_US"
+          BR2_GENERATE_LOCALE="en_US.UTF-8"
+          BR2_SYSTEM_ENABLE_NLS=y
+          BR2_TARGET_GENERIC_ROOT_PASSWD="root"
+          BR2_TARGET_GENERIC_GETTY=y
+          BR2_TARGET_GENERIC_GETTY_PORT="ttyAMA0"
+          BR2_TARGET_GENERIC_HOSTNAME="buildroot-arm64"
+          BR2_TARGET_GENERIC_ISSUE="Welcome to Buildroot ARM64 + X.org + Openbox"
+          EOF
+
+      - name: Build
+        run: |
+          cd buildroot
+          make -j$(nproc) 2>&1 | tee build.log
+
+      - name: Inspect output
+        run: |
+          ls -lah buildroot/output/images/
+          file buildroot/output/images/*
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildroot-arm64-images
+          path: |
+            buildroot/output/images/Image
+            buildroot/output/images/*.dtb
+            buildroot/output/images/rootfs.*
+            buildroot/output/images/*.img
+            buildroot/output/images/*.iso
+            buildroot/output/images/*.gz
+            buildroot/output/images/*.cpio
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload build log
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: buildroot/build.log
+          retention-days: 3
+
+      - name: Create Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            buildroot/output/images/Image
+            buildroot/output/images/*.dtb
+            buildroot/output/images/rootfs.*
+            buildroot/output/images/*.img
+            buildroot/output/images/*.iso
+            buildroot/output/images/*.gz
+            buildroot/output/images/*.cpio
+          body: |
+            Buildroot ARM64 with OPKG, X.org, and Openbox.
+            
+            **Boot with display:**
+            ```bash
+            qemu-system-aarch64 -M virt -cpu cortex-a72 -m 2G \
+              -kernel Image -append "root=/dev/vda console=ttyAMA0" \
+              -drive file=rootfs.ext2,format=raw,if=virtio \
+              -device virtio-gpu-pci -display sdl
+            ```
+            
+            **Boot headless / VNC:**
+            ```bash
+            qemu-system-aarch64 -M virt -cpu cortex-a72 -m 2G \
+              -kernel Image -append "root=/dev/vda console=ttyAMA0" \
+              -drive file=rootfs.ext2,format=raw,if=virtio \
+              -vnc :0
+            ```
+            
+            **Start X + Openbox after boot:**
+            ```bash
+            startx
+            # or
+            xinit /usr/bin/openbox-session
+            ```
+
           BR2_PACKAGE_LIBFFI=y
           BR2_PACKAGE_LIBGPG_ERROR=y
           BR2_PACKAGE_LIBGCRYPT=y
